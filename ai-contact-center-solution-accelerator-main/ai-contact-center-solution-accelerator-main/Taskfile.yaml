@@ -1,0 +1,417 @@
+# Taskfile for AI Contact Centre Solution Accelerator
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  deps:
+    desc: "Installs project dependencies"
+    cmds:
+      - uv sync --all-groups --all-packages
+
+  setup:
+    desc: "Setup development environment"
+    deps: [deps]
+    cmds:
+      - uv run pre-commit install
+
+  lint:
+    desc: "Run linter and fix issues"
+    cmds:
+      - uv run ruff check . --fix
+
+  check-lint:
+    desc: "Run linter check"
+    cmds:
+      - uv run ruff check .
+
+  format:
+    desc: "Run formatter and fix issues"
+    cmds:
+      - uv run ruff format .
+
+  check-format:
+    desc: "Run formatter check"
+    cmds:
+      - uv run ruff format . --diff
+
+  check-type:
+    desc: "Run type checker"
+    cmds:
+      - uv run ty check .
+
+  lock:
+    desc: "Update uv.lock file"
+    cmds:
+      - uv lock
+
+  check-lock:
+    desc: "Check that uv.lock is in sync with pyproject.toml"
+    cmds:
+      - uv lock --locked
+
+  test:
+    desc: "Run main app tests"
+    cmds:
+      - uv run pytest tests/ --cov=src --junitxml=coverage.xml
+
+  test-all:
+    desc: "Run all tests (main + eval)"
+    cmds:
+      - task: test
+      - task: eval-test
+
+  run:
+    desc: "Start the app"
+    cmds:
+      - |
+        export AZURE_OPENAI_ENDPOINT=$(cd infra && terraform output -raw openai_endpoint)
+        export ACS_CONNECTION_STRING=$(cd infra && terraform output -raw acs_connection_string)
+        export CONTAINER_APP_HOSTNAME=localhost:8000
+        uv run fastapi dev src/ai_contact_centre_solution_accelerator/main.py --reload-dir src
+
+  # Docker tasks
+  docker-build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t ai-contact-centre:v0.0.1 .
+
+  docker-run:
+    desc: Run Docker container
+    cmds:
+      - |
+        docker run -it --rm \
+          -p 8000:80 \
+          -e AZURE_OPENAI_ENDPOINT=$(cd infra && terraform output -raw openai_endpoint) \
+          -e ACS_CONNECTION_STRING=$(cd infra && terraform output -raw acs_connection_string) \
+          -e CONTAINER_APP_HOSTNAME=localhost:8000 \
+          -v $(pwd)/config.yaml:/app/config.yaml:ro \
+          ai-contact-centre:v0.0.1
+
+  # Terraform tasks
+  tf-init:
+    desc: Initialize Terraform
+    dir: infra
+    cmds:
+      - terraform init
+
+  tf-plan:
+    desc: Plan Terraform changes
+    dir: infra
+    cmds:
+      - terraform plan -out=tfplan
+
+  tf-apply:
+    desc: Apply Terraform changes
+    dir: infra
+    cmds:
+      - terraform apply tfplan
+
+  tf-destroy:
+    desc: Destroy Terraform-managed infrastructure
+    dir: infra
+    cmds:
+      - terraform destroy
+
+  # Azure Communication Services tasks
+  acs-phone-purchase:
+    desc: Purchase a phone number for ACS
+    cmds:
+      - uv run infra/scripts/purchase_phone_number.py {{.CLI_ARGS}}
+
+  acs-event-grid-setup:
+    desc: Configure Event Grid webhook (run after app-up)
+    dir: infra
+    preconditions:
+      - sh: |
+          az containerapp show \
+            --name ai-contact-centre-app \
+            --resource-group $(terraform output -raw resource_group_name) \
+            --query name -o tsv &>/dev/null
+        msg: |
+          Container App not found. Deploy it first with: task app-up
+    cmds:
+      - |
+        APP_URL=$(az containerapp show \
+          --name ai-contact-centre-app \
+          --resource-group $(terraform output -raw resource_group_name) \
+          --query properties.configuration.ingress.fqdn -o tsv)
+
+        WEBHOOK_URL="https://$APP_URL/calls/incoming"
+        echo "Configuring Event Grid with webhook: $WEBHOOK_URL"
+
+        # Update terraform.tfvars
+        if grep -q "^acs_webhook_endpoint" terraform.tfvars; then
+          # Update existing line
+          sed -i '' "s|^acs_webhook_endpoint.*|acs_webhook_endpoint = \"$WEBHOOK_URL\"|" terraform.tfvars
+        else
+          # Add new line
+          echo "" >> terraform.tfvars
+          echo "# ACS Event Grid webhook (auto-configured)" >> terraform.tfvars
+          echo "acs_webhook_endpoint = \"$WEBHOOK_URL\"" >> terraform.tfvars
+        fi
+
+        echo "Updated terraform.tfvars with webhook endpoint"
+        echo "Run 'task tf-plan && task tf-apply' to create Event Grid subscription"
+
+  # Local ACS debugging
+  tunnel-up:
+    desc: "Start a dev tunnel for local ACS debugging (blocks — run in dedicated terminal)"
+    cmds:
+      - |
+        if devtunnel user show 2>&1 | grep -q "Not logged in"; then
+          echo "Not logged in to devtunnel. Starting login..."
+          devtunnel user login --use-device-code-auth
+        fi
+
+        echo "Starting dev tunnel on port 8000 (anonymous access)..."
+        echo "Keep this terminal open. Press Ctrl+C to stop."
+        echo ""
+        devtunnel host -p 8000 --allow-anonymous
+
+  tunnel-down:
+    desc: "Clean up all dev tunnels"
+    cmds:
+      - |
+        echo "Deleting all dev tunnels..."
+        devtunnel delete-all --force 2>/dev/null || true
+        echo "Done."
+
+  run-with-acs:
+    desc: "Start the app with ACS env vars (requires active dev tunnel)"
+    preconditions:
+      - sh: 'devtunnel list --json 2>/dev/null | jq -e ".tunnels | length > 0" >/dev/null 2>&1'
+        msg: |
+          No active dev tunnel found.
+          Run 'task tunnel-up' in another terminal first.
+    cmds:
+      - |
+        # Discover tunnel host from active tunnel
+        TUNNEL_ID=$(devtunnel list --json | jq -r '.tunnels[0].tunnelId')
+        TUNNEL_URI=$(devtunnel show "$TUNNEL_ID" --json | jq -r '.tunnel.ports[0].portUri // empty')
+        if [ -z "$TUNNEL_URI" ]; then
+          echo "ERROR: Could not determine tunnel URL. Is the tunnel hosting port 8000?"
+          exit 1
+        fi
+        TUNNEL_HOST=$(echo "$TUNNEL_URI" | sed 's|^https://||; s|/$||')
+        echo "Using tunnel host: $TUNNEL_HOST"
+        echo ""
+
+        echo "Fetching infrastructure outputs..."
+        export AZURE_OPENAI_ENDPOINT=$(cd infra && terraform output -raw openai_endpoint)
+        export ACS_CONNECTION_STRING=$(cd infra && terraform output -raw acs_connection_string)
+        
+        echo "Fetching ACS resource ID..."
+        ACS_ID=$(cd infra && terraform output -raw acs_id)
+        export ACS_AUTH_ACS_RESOURCE_ID=$(az rest \
+          --url "https://management.azure.com${ACS_ID}?api-version=2023-04-01" \
+          --query properties.immutableResourceId -o tsv)
+        
+        if [ -z "$ACS_AUTH_ACS_RESOURCE_ID" ]; then
+          echo "ERROR: Failed to fetch ACS immutable resource ID"
+          echo "Make sure Azure CLI is authenticated: az login"
+          exit 1
+        fi
+
+        export CONTAINER_APP_HOSTNAME="$TUNNEL_HOST"
+        export ACS_AUTH_ENABLED=true
+
+        echo ""
+        echo "Starting app with ACS configuration..."
+        echo "  CONTAINER_APP_HOSTNAME=$TUNNEL_HOST"
+        echo "  ACS_AUTH_ENABLED=true"
+        echo "  ACS_AUTH_ACS_RESOURCE_ID=$ACS_AUTH_ACS_RESOURCE_ID"
+        echo ""
+        uv run fastapi dev src/ai_contact_centre_solution_accelerator/main.py --reload-dir src
+
+  acs-local-setup:
+    desc: "Create Event Grid subscription for local ACS debugging"
+    preconditions:
+      - sh: 'devtunnel list --json 2>/dev/null | jq -e ".tunnels | length > 0" >/dev/null 2>&1'
+        msg: |
+          No active dev tunnel found. Run 'task tunnel-up' first.
+    cmds:
+      - |
+        echo "Fetching ACS resource ID..."
+        ACS_ID=$(cd infra && terraform output -raw acs_id)
+
+        # Fail fast if Terraform-managed subscription exists
+        echo "Checking for existing Event Grid subscriptions..."
+        EXISTING=$(az eventgrid event-subscription list \
+          --source-resource-id "$ACS_ID" \
+          --query "[?name!='local-dev-incoming-call'].name" -o tsv 2>/dev/null)
+        if [ -n "$EXISTING" ]; then
+          echo "ERROR: Found existing Event Grid subscription(s):"
+          echo "  $EXISTING"
+          echo ""
+          echo "These are likely Terraform-managed. Remove them first:"
+          echo "  1. Set acs_webhook_endpoint = \"\" in infra/terraform.tfvars"
+          echo "  2. Run: task tf-plan && task tf-apply"
+          exit 1
+        fi
+
+        # Discover tunnel host
+        echo "Discovering tunnel URL..."
+        TUNNEL_ID=$(devtunnel list --json | jq -r '.tunnels[0].tunnelId')
+        TUNNEL_URI=$(devtunnel show "$TUNNEL_ID" --json | jq -r '.tunnel.ports[0].portUri // empty')
+        if [ -z "$TUNNEL_URI" ]; then
+          echo "ERROR: Could not determine tunnel URL."
+          exit 1
+        fi
+        TUNNEL_HOST=$(echo "$TUNNEL_URI" | sed 's|^https://||; s|/$||')
+        WEBHOOK_URL="https://${TUNNEL_HOST}/calls/incoming"
+
+        # Health check via tunnel
+        echo "Checking app is reachable via tunnel..."
+        if ! curl -sf --max-time 10 "https://${TUNNEL_HOST}/status" > /dev/null; then
+          echo "ERROR: App not reachable at https://${TUNNEL_HOST}/status"
+          echo "Make sure 'task run-with-acs' is running in another terminal."
+          exit 1
+        fi
+        echo "App is reachable."
+        echo ""
+
+        echo "Creating Event Grid subscription..."
+        echo "Webhook: $WEBHOOK_URL"
+
+        az eventgrid event-subscription create \
+          --name local-dev-incoming-call \
+          --source-resource-id "$ACS_ID" \
+          --endpoint "$WEBHOOK_URL" \
+          --included-event-types Microsoft.Communication.IncomingCall
+
+        echo ""
+        echo "Done! Incoming calls will now route to your local app."
+        echo "Call your ACS phone number to test."
+
+  acs-local-teardown:
+    desc: "Delete local dev Event Grid subscription"
+    cmds:
+      - |
+        ACS_ID=$(cd infra && terraform output -raw acs_id)
+
+        echo "Checking for local Event Grid subscription..."
+        if az eventgrid event-subscription show \
+          --name local-dev-incoming-call \
+          --source-resource-id "$ACS_ID" >/dev/null 2>&1; then
+          echo "Deleting subscription..."
+          az eventgrid event-subscription delete \
+            --name local-dev-incoming-call \
+            --source-resource-id "$ACS_ID"
+          echo "Deleted."
+        else
+          echo "No subscription found (already deleted?)."
+        fi
+
+  # Azure Container Registry tasks
+  acr-login:
+    desc: Login to Azure Container Registry
+    dir: infra
+    cmds:
+      - az acr login --name $(terraform output -raw acr_name)
+
+  acr-push:
+    desc: Build and push Docker image to Azure Container Registry
+    dir: infra
+    cmds:
+      - |
+        ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
+        docker build --platform linux/amd64 -t $ACR_LOGIN_SERVER/ai-contact-centre:latest ..
+        az acr login --name $(terraform output -raw acr_name)
+        docker push $ACR_LOGIN_SERVER/ai-contact-centre:latest
+
+  # Container App deployment via CLI
+  app-up:
+    desc: Create or update Container App via Azure CLI
+    dir: infra
+    cmds:
+      - |
+        az containerapp up \
+          --name ai-contact-centre-app \
+          --resource-group $(terraform output -raw resource_group_name) \
+          --environment $(terraform output -raw container_app_environment_name) \
+          --image $(terraform output -raw acr_login_server)/ai-contact-centre:latest \
+          --registry-server $(terraform output -raw acr_login_server) \
+          --user-assigned $(terraform output -raw managed_identity_id) \
+          --ingress external \
+          --target-port 80 \
+          --env-vars \
+            AZURE_OPENAI_ENDPOINT=$(terraform output -raw openai_endpoint) \
+            AZURE_OPENAI_DEPLOYMENT=$(terraform output -raw openai_deployment_name) \
+            ACS_CONNECTION_STRING=$(terraform output -raw acs_connection_string) \
+            AZURE_CLIENT_ID=$(terraform output -raw managed_identity_client_id) \
+            ACS_AUTH_ENABLED=true \
+            ACS_AUTH_ACS_RESOURCE_ID=$(az rest --url "https://management.azure.com$(terraform output -raw acs_id)?api-version=2025-05-01" --query properties.immutableResourceId -o tsv)
+
+  # Evaluation tasks
+  eval-test:
+    desc: "Run eval module tests"
+    dir: eval
+    cmds:
+      - uv run pytest tests/ --cov=src/eval --junitxml=coverage.xml
+
+  eval-lint:
+    desc: "Lint eval module"
+    dir: eval
+    cmds:
+      - uv run ruff check src/ tests/ --fix
+      - uv run ruff format src/ tests/
+
+  eval-run:
+    desc: "Run evaluation against local server"
+    dir: eval
+    cmds:
+      - uv run python -m eval --config config.yaml
+
+  eval-run-parallel:
+    desc: "Run evaluation with concurrency"
+    dir: eval
+    cmds:
+      - uv run python -m eval --config config.yaml --concurrency 4
+
+  example-mcp-run:
+    desc: "Start the example customer verification MCP server"
+    cmds:
+      - uv run python examples/mcp-servers/customer-verification/server.py
+
+  app-down:
+    desc: Delete the Container App from Azure
+    dir: infra
+    cmds:
+      - |
+        RESOURCE_GROUP=$(terraform output -raw resource_group_name 2>/dev/null)
+        if [ -z "$RESOURCE_GROUP" ]; then
+          echo "No Terraform state found — nothing to tear down."
+          exit 0
+        fi
+
+        echo "Checking for Container App..."
+        if az containerapp show --name ai-contact-centre-app --resource-group "$RESOURCE_GROUP" --query name -o tsv &>/dev/null; then
+          echo "Deleting Container App: ai-contact-centre-app"
+          az containerapp delete --name ai-contact-centre-app --resource-group "$RESOURCE_GROUP" --yes
+          echo "Container App deleted."
+        else
+          echo "No Container App found — skipping."
+        fi
+
+  teardown:
+    desc: "Full teardown: delete Container App -> destroy infrastructure"
+    cmds:
+      - task: app-down
+      - task: tf-destroy
+
+  # Full deployment workflow
+  deploy:
+    desc: "Full deployment: infra -> push image -> deploy app"
+    cmds:
+      - task: tf-init
+      - task: tf-plan
+      - task: tf-apply
+      - task: acr-push
+      - task: app-up
+

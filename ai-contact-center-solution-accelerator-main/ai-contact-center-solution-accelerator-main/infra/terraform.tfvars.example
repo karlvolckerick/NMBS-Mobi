@@ -1,0 +1,71 @@
+# AI Contact Centre Solution Accelerator - Terraform Configuration
+# ==================================================================
+#
+# Copy this file to terraform.tfvars and customize the values below.
+# Do NOT commit terraform.tfvars to source control (it may contain secrets).
+#
+# After deployment, get the Azure OpenAI endpoint:
+#   terraform output openai_endpoint
+#
+# Then update app config.yaml with this endpoint.
+
+# Project Configuration
+# ---------------------
+# project_name: Used as prefix for all Azure resources.
+project_name = "ai-contact-centre"
+
+# Azure Subscription ID
+# Get your subscription ID: az account show --query id -o tsv
+subscription_id = "your-subscription-id-here"
+
+# Location Configuration
+# ----------------------
+# IMPORTANT: Not all regions support Azure OpenAI Realtime models.
+#
+# Check current availability:
+#   https://learn.microsoft.com/azure/ai-services/openai/concepts/models
+# openai_location can differ from location if your primary region lacks model support.
+location            = "swedencentral"
+openai_location     = "swedencentral"
+
+# Resource Tags
+# -------------
+# Tags applied to all deployed resources for organization and billing.
+tags = {
+  Environment = "dev"
+  Project     = "ai-contact-centre"
+  ManagedBy   = "terraform"
+}
+
+# Realtime Model Configuration
+# ----------------------------
+# The primary model for voice conversations. Must support Realtime API.
+# See ADR: docs/adrs/2026-01-27-Use-VoiceLive-with-Noise-Suppression.md
+openai_deployment_name = "gpt-realtime"
+openai_model_name      = "gpt-realtime"
+openai_model_version   = "2025-08-28"
+openai_model_capacity  = 100
+
+# Transcription Model Configuration (for evaluation module)
+# ---------------------------------------------------------
+# Used by the evaluation module to transcribe agent audio responses.
+transcribe_deployment_name = "gpt-4o-transcribe"
+transcribe_model_name      = "gpt-4o-transcribe"
+transcribe_model_version   = "2025-03-20"
+transcribe_model_capacity  = 100
+
+# Chat Model Configuration (for evaluation module)
+# ------------------------------------------------
+# Used by the evaluation module to simulate customer conversations.
+chat_deployment_name = "gpt-4.1"
+chat_model_name      = "gpt-4.1"
+chat_model_version   = "2025-04-14"
+chat_model_capacity  = 100
+
+# TTS Model Configuration (for evaluation module)
+# -----------------------------------------------
+# Used by the evaluation module to generate customer audio.
+tts_deployment_name = "tts"
+tts_model_name      = "tts"
+tts_model_version   = "001"
+tts_model_capacity  = 1

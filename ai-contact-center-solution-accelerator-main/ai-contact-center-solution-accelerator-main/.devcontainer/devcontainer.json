@@ -1,0 +1,26 @@
+{
+  "name": "AI Contact Centre Solution Accelerator",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/azure-cli:1": {
+      "extensions": "containerapp"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers-extra/features/uv:1": {},
+    "ghcr.io/devcontainers-extra/features/go-task:1": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/stuartleeks/dev-container-features/dev-tunnels:0": {}
+  },
+  "forwardPorts": [8000],
+  "postCreateCommand": "task setup",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml"
+      ]
+    }
+  }
+}

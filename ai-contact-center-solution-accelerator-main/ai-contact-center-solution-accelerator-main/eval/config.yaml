@@ -1,0 +1,22 @@
+target:
+  endpoint: "wss://ai-contact-centre-app.graysea-a080a32a.swedencentral.azurecontainerapps.io/ws"
+  headers: {}
+
+azure_openai:
+  endpoint: "https://ai-contact-centre-aiservices-7rqtlr.cognitiveservices.azure.com/"
+  api_version: "2024-12-01-preview"
+  chat_deployment: "gpt-4.1"
+  tts_deployment: "tts"
+  transcription_deployment: "gpt-4o-transcribe"
+
+dataset: "scenarios.jsonl"
+
+conversation:
+  max_turns: 15
+  voice: "alloy"
+  greeting_wait_seconds: 5
+  silence_timeout_seconds: 10
+
+execution:
+  concurrency: 1
+  output_dir: "outputs"

@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Contact Centre - Voice Call Debugger</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        .header p { color: #666; }
+        .status {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.connected::before { background: #28a745; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        .status.disconnected::before { background: #dc3545; }
+        .status.connecting { background: #fff3cd; color: #856404; }
+        .status.connecting::before { background: #ffc107; animation: pulse 1s infinite; }
+        .status.unavailable { background: #fff3cd; color: #856404; }
+        .status.unavailable::before { background: #ffc107; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .auth-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+            color: #856404;
+            display: none;
+        }
+        .auth-warning.visible { display: block; }
+        .auth-warning strong { color: #664d03; }
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #5a6fd6; transform: translateY(-1px); }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover:not(:disabled) { background: #c82333; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover:not(:disabled) { background: #5a6268; }
+        .agent-indicator {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 12px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .agent-indicator .agent-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .agent-indicator .agent-name {
+            font-weight: 600;
+            color: #333;
+        }
+        .agent-indicator .agent-status {
+            color: #666;
+            font-size: 14px;
+        }
+        .transcript-container {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            height: 350px;
+            overflow-y: auto;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        .transcript-entry {
+            margin-bottom: 12px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 85%;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .transcript-entry.user {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+        .transcript-entry.assistant {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-bottom-left-radius: 4px;
+        }
+        .transcript-speaker {
+            font-weight: 600;
+            font-size: 12px;
+            margin-bottom: 4px;
+            opacity: 0.8;
+        }
+        .transcript-text { line-height: 1.5; }
+        .log-container {
+            background: #1e1e1e;
+            border-radius: 12px;
+            height: 200px;
+            overflow-y: auto;
+            padding: 16px;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+        }
+        .log-entry { margin-bottom: 4px; }
+        .log-entry.info { color: #6cb6ff; }
+        .log-entry.success { color: #7ee787; }
+        .log-entry.error { color: #ff7b72; }
+        .log-entry.warning { color: #d29922; }
+        .log-entry.debug { color: #8b949e; }
+        h3 {
+            color: #333;
+            font-size: 16px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .agents-section {
+            margin-bottom: 24px;
+        }
+        .agents-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 0;
+            transition: all 0.2s;
+        }
+        .agents-section-header:hover {
+            background: #e9ecef;
+        }
+        .agents-section-header h3 {
+            margin-bottom: 0;
+        }
+        .agents-section-header .toggle-icon {
+            font-size: 12px;
+            color: #666;
+            transition: transform 0.3s;
+        }
+        .agents-section.collapsed .toggle-icon {
+            transform: rotate(-90deg);
+        }
+        .agents-section.collapsed .agents-grid {
+            display: none;
+        }
+        .agents-section:not(.collapsed) .agents-section-header {
+            border-radius: 8px 8px 0 0;
+            border-bottom: none;
+        }
+        .agents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+            gap: 0;
+            border: 1px solid #e9ecef;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            overflow: hidden;
+        }
+        .agent-card {
+            background: white;
+            padding: 20px;
+            transition: all 0.2s;
+            border-bottom: 1px solid #e9ecef;
+            border-right: 1px solid #e9ecef;
+            min-height: 280px;
+            display: flex;
+            flex-direction: column;
+        }
+        .agent-card:hover {
+            background: #fafbfc;
+        }
+        .agent-card.active {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
+        }
+        .agent-card-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .agent-card-header > div:last-child {
+            flex: 1;
+        }
+        .agent-card-icon {
+            width: 36px;
+            height: 36px;
+            min-width: 36px;
+            min-height: 36px;
+            flex-shrink: 0;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .agent-card-title {
+            font-weight: 600;
+            color: #333;
+            font-size: 15px;
+        }
+        .agent-card-description {
+            color: #666;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .agent-card-section {
+            margin-top: 12px;
+        }
+        .agent-card-section.instructions {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .agent-card-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #667eea;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .agent-card-instructions {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 12px;
+            color: #555;
+            line-height: 1.5;
+            flex: 1;
+            min-height: 80px;
+            max-height: 120px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .handoff-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .handoff-tag {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: #555;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .handoff-tag .arrow {
+            color: #667eea;
+            font-weight: bold;
+        }
+        .handoff-tag .target {
+            font-weight: 600;
+            color: #333;
+        }
+        .handoff-tag .description {
+            color: #888;
+            font-size: 11px;
+        }
+        .no-handoffs {
+            font-size: 12px;
+            color: #999;
+            font-style: italic;
+        }
+        .loading-agents {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎙️ AI Contact Centre</h1>
+            <p>Voice Call Debugger Interface</p>
+        </div>
+
+        <div id="status" class="status disconnected">Disconnected</div>
+
+        <div id="authWarning" class="auth-warning">
+            <strong>Authentication is enabled.</strong> The debugger cannot connect because it lacks ACS JWT tokens. To test, either disable auth (<code>ACS_AUTH_ENABLED=false</code>) or call the provisioned ACS phone number.
+        </div>
+
+        <div class="agent-indicator" id="agentIndicator">
+            <div class="agent-icon" id="agentIcon">?</div>
+            <div>
+                <div class="agent-name" id="agentName">No Agent</div>
+                <div class="agent-status">Waiting for connection</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" class="btn btn-primary">🎤 Start Call</button>
+            <button id="stopBtn" class="btn btn-danger" disabled>⏹ End Call</button>
+            <button id="clearBtn" class="btn btn-secondary">🗑 Clear</button>
+        </div>
+
+        <div class="agents-section collapsed" id="agentsSection">
+            <div class="agents-section-header" id="agentsSectionHeader">
+                <h3>🤖 Configured Agents</h3>
+                <span class="toggle-icon">▼</span>
+            </div>
+            <div id="agentsGrid" class="agents-grid">
+                <div class="loading-agents">Loading agents...</div>
+            </div>
+        </div>
+
+        <h3>💬 Conversation</h3>
+        <div id="transcriptContainer" class="transcript-container"></div>
+
+        <h3>📋 Event Log</h3>
+        <div id="logContainer" class="log-container"></div>
+    </div>
+
+    <script>
+        class VoiceCallDebugger {
+            constructor() {
+                this.websocket = null;
+                this.audioContext = null;
+                this.mediaStream = null;
+                this.processor = null;
+                this.currentAgent = null;
+
+                this.statusEl = document.getElementById('status');
+                this.transcriptEl = document.getElementById('transcriptContainer');
+                this.logEl = document.getElementById('logContainer');
+                this.startBtn = document.getElementById('startBtn');
+                this.stopBtn = document.getElementById('stopBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.agentNameEl = document.getElementById('agentName');
+                this.agentIconEl = document.getElementById('agentIcon');
+                this.authWarningEl = document.getElementById('authWarning');
+                this.agentsGridEl = document.getElementById('agentsGrid');
+                this.agentsSectionEl = document.getElementById('agentsSection');
+                this.agentsSectionHeaderEl = document.getElementById('agentsSectionHeader');
+                this.configData = null;
+
+                this.startBtn.onclick = () => this.startCall();
+                this.stopBtn.onclick = () => this.stopCall();
+                this.clearBtn.onclick = () => this.clear();
+                this.agentsSectionHeaderEl.onclick = () => this.toggleAgentsSection();
+
+                this.checkAuthStatus();
+            }
+
+            toggleAgentsSection() {
+                this.agentsSectionEl.classList.toggle('collapsed');
+            }
+
+            async checkAuthStatus() {
+                try {
+                    const response = await fetch('/config');
+                    const config = await response.json();
+                    this.configData = config;
+                    if (config.authentication?.enabled) {
+                        this.authWarningEl.classList.add('visible');
+                        this.startBtn.disabled = true;
+                    }
+                    this.renderAgents(config);
+                } catch (error) {
+                    this.log(`Could not check auth status: ${error.message}`, 'warning');
+                    this.agentsGridEl.innerHTML = '<div class="loading-agents">Failed to load agents</div>';
+                }
+            }
+
+            renderAgents(config) {
+                const agents = config.agents || [];
+                const handoffs = config.handoffs || [];
+
+                if (agents.length === 0) {
+                    this.agentsGridEl.innerHTML = '<div class="loading-agents">No agents configured</div>';
+                    return;
+                }
+
+                this.agentsGridEl.innerHTML = agents.map(agent => {
+                    const agentHandoffs = handoffs.filter(h => h.from_agent === agent.name);
+                    const displayName = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
+
+                    return `
+                        <div class="agent-card" data-agent-name="${agent.name}">
+                            <div class="agent-card-header">
+                                <div class="agent-card-icon">${displayName.charAt(0)}</div>
+                                <div>
+                                    <div class="agent-card-title">${displayName}</div>
+                                    <div class="agent-card-description">${this.escapeHtml(agent.description || 'No description')}</div>
+                                </div>
+                            </div>
+                            <div class="agent-card-section instructions">
+                                <div class="agent-card-section-title">Instructions</div>
+                                <div class="agent-card-instructions">${this.escapeHtml(agent.instructions || 'No instructions')}</div>
+                            </div>
+                            <div class="agent-card-section">
+                                <div class="agent-card-section-title">Handoffs</div>
+                                ${agentHandoffs.length > 0 ? `
+                                    <div class="handoff-list">
+                                        ${agentHandoffs.map(h => {
+                                            const targetName = h.to.charAt(0).toUpperCase() + h.to.slice(1);
+                                            return `<div class="handoff-tag">
+                                                <span class="arrow">→</span>
+                                                <span class="target">${targetName}</span>
+                                                <span class="description">${this.escapeHtml(h.description)}</span>
+                                            </div>`;
+                                        }).join('')}
+                                    </div>
+                                ` : '<div class="no-handoffs">No handoffs configured</div>'}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            log(message, level = 'info') {
+                const time = new Date().toLocaleTimeString();
+                const entry = document.createElement('div');
+                entry.className = `log-entry ${level}`;
+                entry.textContent = `[${time}] ${message}`;
+                this.logEl.appendChild(entry);
+                this.logEl.scrollTop = this.logEl.scrollHeight;
+            }
+
+            setStatus(status, text) {
+                this.statusEl.className = `status ${status}`;
+                this.statusEl.textContent = text;
+            }
+
+            updateAgent(agentName) {
+                this.currentAgent = agentName;
+                const displayName = agentName.charAt(0).toUpperCase() + agentName.slice(1);
+                this.agentNameEl.textContent = displayName;
+                this.agentIconEl.textContent = displayName.charAt(0);
+                this.log(`Agent switched to: ${displayName}`, 'success');
+
+                // Highlight active agent card
+                document.querySelectorAll('.agent-card').forEach(card => {
+                    card.classList.remove('active');
+                    if (card.dataset.agentName === agentName) {
+                        card.classList.add('active');
+                    }
+                });
+            }
+
+            addTranscript(speaker, text) {
+                const entry = document.createElement('div');
+                const isUser = speaker === 'user';
+                entry.className = `transcript-entry ${isUser ? 'user' : 'assistant'}`;
+
+                const speakerEl = document.createElement('div');
+                speakerEl.className = 'transcript-speaker';
+                speakerEl.textContent = isUser ? 'You' : (this.currentAgent || speaker).charAt(0).toUpperCase() + (this.currentAgent || speaker).slice(1);
+
+                const textEl = document.createElement('div');
+                textEl.className = 'transcript-text';
+                textEl.textContent = text;
+
+                entry.appendChild(speakerEl);
+                entry.appendChild(textEl);
+                this.transcriptEl.appendChild(entry);
+                this.transcriptEl.scrollTop = this.transcriptEl.scrollHeight;
+            }
+
+            async startCall() {
+                try {
+                    this.setStatus('connecting', 'Connecting...');
+                    this.log('Starting call...', 'info');
+
+                    // Get microphone access
+                    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            sampleRate: 24000,
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                        }
+                    });
+                    this.log('Microphone access granted', 'success');
+
+                    // Setup audio context
+                    this.audioContext = new AudioContext({ sampleRate: 24000 });
+                    this.nextPlaybackTime = 0;
+
+                    // Connect WebSocket
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws`;
+                    this.websocket = new WebSocket(wsUrl);
+
+                    this.websocket.onopen = () => {
+                        this.setStatus('connected', 'Connected - Speak now');
+                        this.log('WebSocket connected', 'success');
+                        this.startBtn.disabled = true;
+                        this.stopBtn.disabled = false;
+                        this.startAudioCapture();
+                    };
+
+                    this.websocket.onmessage = (event) => this.handleMessage(event);
+
+                    this.websocket.onerror = () => {
+                        this.log('WebSocket connection error', 'error');
+                    };
+
+                    this.websocket.onclose = (event) => {
+                        let message = 'Disconnected';
+                        if (event.code === 1008) {
+                            message = 'Authentication failed (403)';
+                            this.log('WebSocket closed: Authentication failed - unauthorized connection', 'error');
+                        } else if (event.code === 1006) {
+                            message = 'Connection lost unexpectedly';
+                            this.log(`WebSocket closed: Connection lost (code: ${event.code})`, 'error');
+                        } else if (event.code !== 1000) {
+                            this.log(`WebSocket closed with code: ${event.code}${event.reason ? ' - ' + event.reason : ''}`, 'warning');
+                        } else {
+                            this.log('WebSocket closed normally', 'info');
+                        }
+                        this.setStatus('disconnected', message);
+                        this.stopCall();
+                    };
+
+                } catch (error) {
+                    this.log(`Error starting call: ${error.message}`, 'error');
+                    this.setStatus('disconnected', 'Error - Check console');
+                }
+            }
+
+            startAudioCapture() {
+                const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+                this.processor.onaudioprocess = (event) => {
+                    if (this.websocket?.readyState === WebSocket.OPEN) {
+                        const inputData = event.inputBuffer.getChannelData(0);
+                        const pcm16 = this.floatTo16BitPCM(inputData);
+                        const base64 = this.arrayBufferToBase64(pcm16.buffer);
+
+                        this.websocket.send(JSON.stringify({
+                            kind: 'AudioData',
+                            audioData: { data: base64 }
+                        }));
+                    }
+                };
+
+                source.connect(this.processor);
+                this.processor.connect(this.audioContext.destination);
+                this.log('Audio capture started', 'info');
+            }
+
+            handleMessage(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    this.log(`Received event: ${data.kind}`, 'debug');
+
+                    switch (data.kind) {
+                        case 'Transcription':
+                            if (data.data?.text) {
+                                const speaker = data.data.speaker || 'unknown';
+                                this.log(`Transcription from ${speaker}: ${data.data.text.substring(0, 50)}...`, 'info');
+                                this.addTranscript(speaker, data.data.text);
+                            }
+                            break;
+
+                        case 'AgentSwitch':
+                            if (data.data?.agentName) {
+                                this.updateAgent(data.data.agentName);
+                            }
+                            break;
+
+                        case 'AudioData':
+                            if (data.audioData?.data) {
+                                this.queueAudio(data.audioData.data);
+                            }
+                            break;
+
+                        case 'StopAudio':
+                            this.resetPlayback();
+                            break;
+
+                        case 'Error':
+                        case 'AgentError':
+                            this.log(`Error: ${data.message || 'Unknown error'}`, 'error');
+                            break;
+
+                        default:
+                            this.log(`Received: ${data.kind}`, 'debug');
+                    }
+                } catch (error) {
+                    this.log(`Error parsing message: ${error.message}`, 'error');
+                }
+            }
+
+            queueAudio(base64Data) {
+                const binaryString = atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                const int16Array = new Int16Array(bytes.buffer);
+                const float32Array = new Float32Array(int16Array.length);
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0;
+                }
+
+                const buffer = this.audioContext.createBuffer(1, float32Array.length, 24000);
+                buffer.getChannelData(0).set(float32Array);
+
+                const source = this.audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(this.audioContext.destination);
+
+                const startTime = Math.max(this.nextPlaybackTime, this.audioContext.currentTime);
+                source.start(startTime);
+                this.nextPlaybackTime = startTime + buffer.duration;
+            }
+
+            resetPlayback() {
+                this.nextPlaybackTime = 0;
+            }
+
+            floatTo16BitPCM(float32Array) {
+                const buffer = new ArrayBuffer(float32Array.length * 2);
+                const view = new DataView(buffer);
+                for (let i = 0; i < float32Array.length; i++) {
+                    const s = Math.max(-1, Math.min(1, float32Array[i]));
+                    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                }
+                return new Int16Array(buffer);
+            }
+
+            arrayBufferToBase64(buffer) {
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                for (let i = 0; i < bytes.byteLength; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                return btoa(binary);
+            }
+
+            stopCall() {
+                if (this.websocket) {
+                    this.websocket.close();
+                    this.websocket = null;
+                }
+
+                if (this.processor) {
+                    this.processor.disconnect();
+                    this.processor = null;
+                }
+
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                    this.mediaStream = null;
+                }
+
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+
+                this.resetPlayback();
+                this.setStatus('disconnected', 'Disconnected');
+                this.startBtn.disabled = false;
+                this.stopBtn.disabled = true;
+                this.log('Call ended', 'info');
+            }
+
+            clear() {
+                this.transcriptEl.innerHTML = '';
+                this.logEl.innerHTML = '';
+                this.log('Cleared', 'info');
+            }
+        }
+
+        // Initialize on page load
+        const debugger_ = new VoiceCallDebugger();
+    </script>
+</body>
+</html>

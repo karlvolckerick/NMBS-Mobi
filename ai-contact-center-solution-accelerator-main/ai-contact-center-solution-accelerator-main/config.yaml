@@ -1,0 +1,356 @@
+# AI Contact Centre Solution Accelerator Configuration
+# ======================================================
+#
+# This file defines agents, tools, handoffs, and Azure OpenAI settings.
+# Agents and tools can be added/modified without changing application code.
+#
+# Environment variable substitution: Use ${VAR_NAME} syntax for secrets.
+# Example: Authorization: "Bearer ${API_KEY}"
+#
+# For detailed configuration guidance, see:
+# - README.md (Quick Start section)
+# - docs/architecture.md (Configuration Schema section)
+
+# Application metadata
+app:
+  name: "AI Contact Centre Solution Accelerator"
+  description: "Multi-agent realtime voice assistant with intelligent handoffs"
+  version: "1.0.0"
+
+# Azure OpenAI Configuration
+# --------------------------
+# endpoint: Automatically read from AZURE_OPENAI_ENDPOINT environment variable.
+#           The `task run` command sets this from Terraform output.
+# deployment: Must match the deployment name in Azure AI Studio
+# client_type: "voicelive" (recommended) or "realtime"
+#   - voicelive: Better noise handling, 600+ voices, recommended for production
+#   - realtime: Simpler setup, 6 OpenAI voices, good for quiet environments
+# See ADR: docs/adrs/2026-01-27-Use-VoiceLive-with-Noise-Suppression.md
+azure_openai:
+  endpoint: "${AZURE_OPENAI_ENDPOINT}"
+  deployment: "gpt-realtime"
+  api_version: "2025-05-01-preview"
+  transcription_model: "azure-speech"
+  client_type: "voicelive"
+
+# VoiceLive Settings (only used when client_type is "voicelive")
+# --------------------------------------------------------------
+# These settings enhance audio quality in real-world conditions.
+# Experimental data shows VoiceLive achieves 89% function call success vs 82% for Realtime.
+voicelive:
+  noise_reduction:
+    enabled: true  # Uses azure_deep_noise_suppression - recommended for offices, cafes
+
+  echo_cancellation:
+    enabled: true  # Prevents agent hearing its own responses - essential for speakers
+
+  # Semantic VAD: AI-powered detection of when user is done speaking
+  # Alternative to server_vad in turn_detection section
+  semantic_vad:
+    enabled: true
+    eagerness: "low"  # low (waits longer), medium, high (responds quickly), auto
+    interrupt_response: false  # Disables mic while agent is speaking - prevents echo triggering responses
+    remove_filler_words: true
+    end_of_utterance:
+      threshold: 0.75  # Higher = needs more confidence speech ended (avoids cutting off mid-pause)
+      timeout: 320     # ms to wait after end-of-utterance detected before responding (faster than default)
+
+  voice:
+    type: "azure-standard"  # azure-standard (600+ voices) or azure-custom
+    rate: "1.0"
+    temperature: 0.8
+    endpoint_id: ""  # Only for azure-custom voices
+    custom_lexicon_url: ""
+
+  animation:
+    viseme_enabled: false  # Mouth movement data for avatars
+
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# Default Voice Configuration
+# ---------------------------
+# VoiceLive: Use Azure TTS voice names
+#   Examples: en-US-AvaMultilingualNeural, en-GB-SoniaNeural, en-GB-RyanNeural
+#   Full list: https://learn.microsoft.com/azure/ai-services/speech-service/language-support
+#
+# Realtime: Use OpenAI voice names
+#   Options: alloy, echo, fable, onyx, nova, shimmer
+voice:
+  default: "en-US-AvaMultilingualNeural"
+
+# Turn Detection (Voice Activity Detection)
+# -----------------------------------------
+# Controls how the system detects when the user has finished speaking.
+turn_detection:
+  type: "server_vad"  # server_vad (standard) or use semantic_vad in voicelive section
+  silence_duration_ms: 600  # How long to wait after user stops speaking (lower = faster responses)
+  threshold: 0.8  # Sensitivity (0.0-1.0, higher = less sensitive to background noise)
+  create_response: true  # Automatically respond after detecting end of speech
+
+# Agent Definitions
+# -----------------
+# Each agent is an AI persona with specific instructions and tools.
+# Agents handle different domains and can transfer conversations to each other.
+#
+# Required fields:
+#   name: Unique identifier (lowercase, underscores only)
+#   description: Used in handoff function descriptions - helps AI decide when to transfer
+#   instructions: System prompt defining agent behavior
+#
+# Optional fields:
+#   voice: TTS voice (overrides voice.default)
+#   plugins: List of plugin names from plugins section
+#   mcp: List of MCP server names from mcp_servers section
+agents:
+   - name: "receptionist"
+     description: "A friendly receptionist who greets callers and routes them to the appropriate department"
+     instructions: |
+       You are a friendly receptionist for NMBS.
+
+       When a caller connects, your very first words must be exactly this — no more, no less:
+       "Hello and welcome to NMBS! Would you like to continue in English, or do you prefer Nederlands, Français, or Deutsch?"
+       Do not add any other words before or after this greeting. Do not paraphrase it.
+       Wait for the caller to respond. If they choose a different language, immediately switch to that language for the entire remainder of the call.
+       Do not ask for the language again after it has been selected.
+
+       Your responsibilities:
+        - Understands travel intent
+        - Route planning (origin → destination)
+        - Timetable lookup
+        - Platform information
+        - Ticket type guidance
+        - Transfers to ticketing / disruptions / support
+
+       You have access to live NMBS train data:
+        - Use get_live_departures to find the next train from a station.
+        - Use get_connections to plan a journey between two stations.
+        - Always look up live data before giving timetable or route information.
+        - Present ONE result at a time, then ask: "Would you like to hear more options?"
+        - Only call get_more_departures or get_more_connections if the caller says yes.
+
+       Available departments:
+        - Ticketing & Subscriptions: For ticket purchases, season passes, refunds, and fare questions
+        - Disruptions & Compensations: For delays, cancellations, alternative routes, and compensation claims
+        - Digital Support: For NMBS app issues, QR tickets, login problems, and payment errors
+
+       Be concise, professional, and helpful.
+       Respond in the language the caller selected at the start of the call.
+       You support Dutch (Nederlands), French (Français), German (Deutsch), and English.
+       If the caller explicitly asks to switch language mid-call, switch with them.
+     plugins:
+       - "receptionist_plugin"
+       - "nmbs_timetable_plugin"
+     mcp_servers:
+       - "email_sender"
+
+   - name: "ticketing"
+     description: "A ticketing & subscription specialist who handles ticket purchases and subscription questions"
+     voice: "en-US-AvaMultilingualNeural"
+     instructions: |
+       You are a ticketing & subscription specialist for NMBS.
+
+       Your responsibilities:
+       - Ticket purchase
+       - Season passes (e.g. Rail Pass/Campus Card)
+       - Seat Reservations
+       - Refund requests
+       - Fare questions
+       - Payment confirmation
+
+       Always verify account details before providing sensitive information.
+       Continue in the same language the caller chose at the start of the call with the receptionist.
+       You support Dutch (Nederlands), French (Français), German (Deutsch), and English.
+       If the caller explicitly asks to switch language, switch with them.
+     plugins:
+       - "billing_plugin"
+     mcp_servers:
+       - "email_sender"
+
+   - name: "disruptions"
+     description: "A technical support specialist who helps with train disruptions and compensations"
+     voice: "en-US-AndrewMultilingualNeural"
+     instructions: |
+       You are a technical support specialist for NMBS.
+
+       Your responsibilities:
+       - Delay information
+       - Cancelled trains
+       - Alternative route suggestions
+       - Service alerts
+       - Missed connection handling
+       - Delay compensation eligibility
+
+       You have access to live NMBS network data:
+       - Use get_current_disruptions to look up active delays, cancellations and planned works.
+       - Use get_live_departures to check trains at a specific station.
+       - Use get_connections to find alternative routes between stations.
+       - Present ONE piece of information at a time. If there are multiple disruptions, mention the count and describe the most relevant one, then ask if they want to hear the others.
+       - Only call get_more_departures or get_more_connections if the caller explicitly asks.
+
+       Be patient and thorough in your explanations.
+       Continue in the same language the caller chose at the start of the call with the receptionist.
+       You support Dutch (Nederlands), French (Français), German (Deutsch), and English.
+       If the caller explicitly asks to switch language, switch with them.
+     plugins:
+       - "support_plugin"
+       - "nmbs_disruptions_plugin"
+       - "nmbs_timetable_plugin"
+     mcp_servers:
+       - "email_sender"
+
+   - name: "digital_support"
+     description: "A digital support specialist who handles technical issues with the NMBS mobile app and ticketing systems"
+     voice: "en-US-AvaMultilingualNeural"
+     instructions: |
+       You are a digital support specialist for NMBS.
+
+       Your responsibilities:
+       - NMBS mobile app issues
+       - QR ticket scanning problems
+       - Login issues
+       - Smartcard / NFC ticketing
+       - Ticket validation failures
+       - Payment processing errors
+
+       Be clear, consultative, and concise.
+       Continue in the same language the caller chose at the start of the call with the receptionist.
+       You support Dutch (Nederlands), French (Français), German (Deutsch), and English.
+       If the caller explicitly asks to switch language, switch with them.
+     mcp_servers:
+       - "email_sender"
+
+# Handoff Definitions
+# -------------------
+# Defines which agents can transfer to which other agents.
+# The description helps the AI decide when to trigger a transfer.
+#
+# The system automatically injects transfer_to_X functions into each agent.
+# For example, the handoff below creates a transfer_to_billing() function
+# that the receptionist can call.
+handoffs:
+   - from: "receptionist"
+     to: "ticketing"
+     description: "Transfer to ticketing & subscriptions for payment and account questions"
+
+   - from: "receptionist"
+     to: "disruptions"
+     description: "Transfer to disruptions & compensations for technical issues"
+
+   - from: "receptionist"
+     to: "digital_support"
+     description: "Transfer to digital support for technical issues with the NMBS mobile app and ticketing systems"
+
+   - from: "ticketing"
+     to: "disruptions"
+     description: "Transfer to disruptions & compensations for technical issues"
+
+   - from: "ticketing"
+     to: "digital_support"
+     description: "Transfer to digital support for technical issues with the NMBS mobile app and ticketing systems"
+
+   - from: "digital_support"
+     to: "receptionist"
+     description: "Transfer to receptionist for general questions"
+
+   - from: "digital_support"
+     to: "ticketing"
+     description: "Transfer to ticketing & subscriptions for payment questions"
+
+   - from: "disruptions"
+     to: "receptionist"
+     description: "Transfer to receptionist for general questions"
+
+# Plugin Definitions
+# ------------------
+# Plugins are Python classes with @kernel_function decorated methods.
+# The AI calls these functions when it needs to perform actions.
+#
+# Plugin classes must be in src/ai_contact_centre_solution_accelerator/tools/
+# The description in @kernel_function tells the AI when to use each function.
+#
+# See README.md "Creating Custom Tools" section for examples.
+plugins:
+   - name: "receptionist_plugin"
+     module: "example_tools"
+     class_name: "ReceptionistPlugin"
+
+   - name: "billing_plugin"
+     module: "example_tools"
+     class_name: "BillingPlugin"
+
+   - name: "support_plugin"
+     module: "example_tools"
+     class_name: "SupportPlugin"
+
+   - name: "order_tracking_plugin"
+     module: "order_tracking_tools"
+     class_name: "OrderTrackingPlugin"
+
+   # NMBS live train data via iRail open API (https://api.irail.be)
+   - name: "nmbs_timetable_plugin"
+     module: "nmbs_tools"
+     class_name: "NMBSTimetablePlugin"
+
+   - name: "nmbs_disruptions_plugin"
+     module: "nmbs_tools"
+     class_name: "NMBSDisruptionsPlugin"
+
+# MCP Server Definitions
+# ----------------------
+# External tool servers accessed via Model Context Protocol.
+# MCP lets you connect to CRMs, databases, APIs without custom code.
+#
+# Transport types:
+#   http: Remote servers (requires url, optional headers)
+#   stdio: Local processes (requires command, optional args and env)
+#
+# Reference environment variables with ${VAR_NAME} syntax.
+mcp_servers:
+  - name: "email_sender"
+    transport: "stdio"
+    command: "/app/.venv/bin/python"
+    args: ["/app/src/ai_contact_centre_solution_accelerator/tools/email_mcp_server.py"]
+    env:
+      ACS_CONNECTION_STRING: "${ACS_CONNECTION_STRING}"
+      ACS_EMAIL_SENDER: "${ACS_EMAIL_SENDER}"
+    description: "Send emails to callers with ticket confirmations, timetables, disruption info, or other content"
+
+  # Customer verification example (run with: task example-mcp-run):
+#   - name: "customer_verification"
+#     transport: "http"
+#     url: "http://localhost:8001/mcp"
+
+  # Example HTTP server:
+  # - name: "crm"
+  #   transport: "http"
+  #   url: "https://crm.example.com/mcp"
+  #   headers:
+  #     Authorization: "Bearer ${CRM_API_KEY}"
+  #
+  # Example Stdio server:
+  # - name: "knowledge_base"
+  #   transport: "stdio"
+  #   command: "npx"
+  #   args: ["-y", "@company/kb-mcp-server"]
+  #   env:
+  #     API_KEY: "${KB_API_KEY}"
+
+# Orchestration Settings
+orchestration:
+  # Silent handoffs: When true, agents transfer without saying "please hold" or similar.
+  # The customer just hears the new agent's voice continuing the conversation.
+  silent_handoffs: true
+
+# Authentication Configuration
+# ----------------------------
+# JWT authentication for ACS WebSocket connections.
+# Controlled via environment variables (set automatically by `task app-up`):
+#   ACS_AUTH_ENABLED            - Enable/disable (default: false)
+#   ACS_AUTH_ACS_RESOURCE_ID    - ACS resource ID (audience claim)
+#   ACS_AUTH_JWKS_CACHE_LIFESPAN - JWKS cache TTL in seconds (default: 300)
+#
+# See ADR: docs/adrs/2026-01-27-Secure-WebSocket-Connection.md
