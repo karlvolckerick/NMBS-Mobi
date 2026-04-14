@@ -12,7 +12,6 @@ An AI-powered contact centre for **NMBS (Belgian Railways)** — callers speak n
 | **App URL** | https://ai-contact-centre-app.graysea-a080a32a.swedencentral.azurecontainerapps.io |
 | **Health check** | [`/status`](https://ai-contact-centre-app.graysea-a080a32a.swedencentral.azurecontainerapps.io/status) |
 | **Region** | Sweden Central |
-| **Resource group** | `rg-ai-contact-centre-7rqtlr` |
 
 ## 🤖 AI Agents
 
