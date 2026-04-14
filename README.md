@@ -1,20 +1,42 @@
-# AI Contact Centre Solution Accelerator
+# NMBS AI Contact Centre
 
-A production-ready, multi-agent realtime voice assistant with intelligent handoffs using Azure AI Services and Semantic
-Kernel. Build your own AI-powered contact centre with configurable agents, tools, and seamless call routing.
+> Built on the [AI Contact Centre Solution Accelerator](https://github.com/Azure-Samples/ai-contact-centre-solution-accelerator) — a production-ready, multi-agent realtime voice assistant using Azure AI Services and Semantic Kernel.
+
+An AI-powered contact centre for **NMBS (Belgian Railways)** — callers speak naturally with AI agents that handle train enquiries, ticketing, disruptions, and digital support across 4 languages (EN/NL/FR/DE). No IVR menus. No hold queues.
+
+## 📞 Live Deployment
+
+| | |
+|---|---|
+| **Phone number** | **+1 (866) 493-9541** (US toll-free) |
+| **App URL** | https://ai-contact-centre-app.graysea-a080a32a.swedencentral.azurecontainerapps.io |
+| **Health check** | [`/status`](https://ai-contact-centre-app.graysea-a080a32a.swedencentral.azurecontainerapps.io/status) |
+| **Region** | Sweden Central |
+| **Resource group** | `rg-ai-contact-centre-7rqtlr` |
+
+## 🤖 AI Agents
+
+| Agent | Voice | Handles |
+|---|---|---|
+| **Receptionist** | en-US-AvaMultilingualNeural | Greeting, language selection (EN/NL/FR/DE), journey planning, live departures & connections |
+| **Ticketing** | en-US-AvaMultilingualNeural | Ticket purchases, Rail Pass, seat reservations, refunds, fare questions |
+| **Disruptions** | en-US-AndrewMultilingualNeural | Live delays, cancellations, alternative routes, missed connections, delay compensation |
+| **Digital Support** | en-US-AvaMultilingualNeural | NMBS app issues, QR ticket scanning, login problems, payment errors |
+
+Agents hand off silently — callers hear no "please hold" message, just the new agent continuing the conversation.
 
 ## 🎯 Features
 
-- **Multi-Agent Orchestration**: Define specialized agents that handle different domains (billing, support, sales, etc.)
-- **Realtime Voice Processing**: Live audio streaming with Azure OpenAI Realtime API or VoiceLive
-- **Intelligent Handoffs**: Seamless, silent transfers between agents based on conversation context
-- **YAML Configuration**: Define agents, tools, and handoffs without code changes
-- **Plugin Architecture**: Extensible function calling with custom Python tools
-- **MCP Server Support**: Integrate external tools via Model Context Protocol (HTTP or stdio)
-- **Azure Communication Services**: Accept real phone calls via ACS integration
-- **Automated Evaluation**: End-to-end testing with LLM-driven customer simulation
-- **Infrastructure as Code**: Terraform modules deploy all required Azure resources
-- **Docker Ready**: Production-ready container with multi-stage build
+- **Multi-Agent Orchestration**: 4 specialist agents with intelligent silent handoffs
+- **Realtime Voice Processing**: Azure OpenAI VoiceLive with deep noise suppression (89% function call success rate)
+- **Live iRail Train Data**: Real-time departures, connections, disruptions via the open iRail API
+- **Multilingual**: EN / NL / FR / DE — language selected by the caller at the start of each call
+- **Email Follow-up**: All agents can send callers timetables, ticket confirmations, or disruption summaries via email
+- **ACS Phone Integration**: Real inbound calls via Azure Communication Services
+- **YAML Configuration**: Agents, tools, and handoffs defined without code changes
+- **MCP Server Support**: Email sender via Model Context Protocol (stdio)
+- **Infrastructure as Code**: Terraform deploys all Azure resources
+- **Docker Ready**: Production container deployed to Azure Container Apps
 
 ## 💡 Key Concepts
 
@@ -55,13 +77,14 @@ In a contact centre, different specialists handle different requests. A **handof
 from one AI agent to another:
 
 ```
-Customer calls → Receptionist agent greets them
-Customer: "I have a billing question"
-         → Receptionist hands off to Billing agent (silently)
-Billing agent: "I can help with that. What's your account number?"
+Caller dials +1 866 493 9541
+→ Receptionist greets in EN/NL/FR/DE
+Caller: "I want to claim compensation for a delayed train"
+→ Receptionist silently hands off to Disruptions agent
+Disruptions agent: "I can help with that. Which train were you on?"
 ```
 
-The transfer is **silent** - the customer hears the new agent's voice but no "please hold" message. The new
+The transfer is **silent** - the caller hears the new agent's voice but no "please hold" message. The new
 agent receives the full conversation history.
 
 ### Semantic Kernel
@@ -83,31 +106,51 @@ supports both HTTP and stdio transports.
 ## 🏗️ Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              Phone / Browser / Voice Debugger                   │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │ WebSocket (Audio + Events)
+┌──────────────────────────────────────────────────────────────────┐
+│         Caller dials +1 (866) 493-9541 (ACS toll-free)          │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│          Azure Communication Services (ACS)                      │
+│          Phone number · Call routing · Audio stream              │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │ Event Grid + WebSocket
                           ▼
 ┌────────────────────────────────────────────────────────────────┐
-│                    FastAPI Application                         │
+│           FastAPI Application (Azure Container Apps)           │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │           RealtimeHandoffOrchestration                  │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │   │
-│  │  │ Receptionist│  │   Billing   │  │   Support   │      │   │
-│  │  │  + Plugins  │  │  + Plugins  │  │  + Plugins  │      │   │
-│  │  │  + MCP      │  │  + MCP      │  │  + MCP      │      │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘      │   │
+│  │              RealtimeHandoffOrchestration                │   │
+│  │  ┌───────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐  │   │
+│  │  │Receptionist│ │Ticketing │ │Disruptions│ │ Digital  │  │   │
+│  │  │+ iRail    │ │+ Billing │ │+ iRail    │  │ Support  │  │   │
+│  │  │+ Email MCP│ │+ Email   │ │+ Email    │ │+ Email   │  │   │
+│  │  └───────────┘ └──────────┘ └───────────┘ └──────────┘  │   │
 │  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────┬──────────────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          ▼               ▼               ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Azure OpenAI │  │  MCP Servers │  │     ACS      │
-│  Realtime/   │  │  (External   │  │  (Phone      │
-│  VoiceLive   │  │   Tools)     │  │   Calls)     │
-└──────────────┘  └──────────────┘  └──────────────┘
+└──────────┬──────────────────────┬───────────────────────────────┘
+           │                      │
+           ▼                      ▼
+┌──────────────────────┐  ┌──────────────────────┐
+│  Azure OpenAI        │  │  iRail Open API       │
+│  VoiceLive           │  │  api.irail.be         │
+│  - Deep noise supp.  │  │  - Live departures    │
+│  - Echo cancellation │  │  - Connections        │
+│  - 600+ TTS voices   │  │  - Disruptions        │
+│  - Semantic VAD      │  └──────────────────────┘
+└──────────────────────┘
 ```
+
+**Azure services used:**
+
+| Service | Purpose |
+|---|---|
+| Azure OpenAI (VoiceLive) | Voice AI — STT + LLM + TTS in one API |
+| Azure Communication Services | Phone number + call routing |
+| Azure Container Apps | Hosts the FastAPI application (Sweden Central) |
+| Azure Container Registry | Stores the Docker image |
+| Azure Event Grid | Delivers inbound call events to the app |
+| Azure Application Insights | Monitoring & telemetry |
+| Managed Identity | Passwordless auth between all services |
 
 See [Architecture Guide](docs/architecture.md) for detailed component documentation.
 
@@ -837,3 +880,4 @@ task --list  # Show all available tasks
 4. **Non-root Docker**: Container runs as unprivileged user
 
 See [ADR: Secure WebSocket Connection](docs/adrs/2026-01-27-Secure-WebSocket-Connection.md) for authentication details.
+
