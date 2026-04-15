@@ -1,6 +1,6 @@
 # NMBS AI Contact Centre
 
-> Built on the [AI Contact Centre Solution Accelerator](https://github.com/Azure-Samples/ai-contact-centre-solution-accelerator) — a production-ready, multi-agent realtime voice assistant using Azure AI Services and Semantic Kernel.
+> Built on the [AI Contact Centre Solution Accelerator](https://github.com/commercial-software-engineering/ai-contact-center-solution-accelerator) — a production-ready, multi-agent realtime voice assistant using Azure AI Services and Semantic Kernel.
 
 An AI-powered contact centre for **NMBS (Belgian Railways)** — callers speak naturally with AI agents that handle train enquiries, ticketing, disruptions, and digital support across 4 languages (EN/NL/FR/DE). No IVR menus. No hold queues.
 
